@@ -8,7 +8,7 @@ from astropy import constants as const
 
 '''
 stellar_model.py
-Yukei S. Murakami, Johns Hopkins University May 2023
+Yukei S. Murakami @ Johns Hopkins University, May 2023
 
 Stellar structure calculation for chemically homogeneous ZAMS star in its equilibrium state.
 
@@ -27,6 +27,7 @@ Contents:
         - calc_pressure: from density (inverse of calc_density)
         - calc_beta: ratio between P and P_gas
     - integration
+        - shoot_out: shoot to the surface
         - shootf: shoot to a fit point
     - differential equations
         - derivs
@@ -45,19 +46,19 @@ m_p = const.m_p.cgs.value  # proton mass in CGS units (g)
 a = 7.56577e-15 # erg/cm3/K4
 
 # select Table 75
-# X=0.7000
-# Y=0.2600
-# Z=0.0400
+X=0.7000
+Y=0.2600
+Z=0.0400
+TABLE_ID = 75
 
-X = 0.35
-Y = 0.55
-Z = 0.1
-# TABLE_ID = 75
-TABLE_ID = 52
+# X = 0.35
+# Y = 0.55
+# Z = 0.1
+# TABLE_ID = 52
 
 
 ###################
-#  opacity 
+#  energy transport 
 ###################
 
 # identify table in the raw ASCII file
@@ -78,13 +79,23 @@ df = pd.read_csv('GN93hz', delim_whitespace = True,
 logT_table = df.columns.astype(float).values
 logR_table = df.index.astype(float).values
 kappa = df.to_numpy()
+
+# extrapolate
 interp = RegularGridInterpolator((logT_table, logR_table), kappa.T,
                                  bounds_error=False,
                                  fill_value=None)#np.nan)
+# no extrapolate 
+interp_noext = RegularGridInterpolator((logT_table, logR_table), kappa.T,
+                                 bounds_error=False,
+                                 fill_value=np.nan)
 
-def calc_opacity(logT,rho):
+
+def calc_opacity(logT,rho,extrapolate=True):
     logR = np.log10(rho / (1e-6*(10**logT))**3)
-    log_opacity = interp(np.array([logT,logR]).T)
+    if extrapolate:
+        log_opacity = interp(np.array([logT,logR]).T)
+    else:
+        log_opacity = interp_noext(np.array([logT,logR]).T)
     opacity = 10**log_opacity
     return opacity
 
@@ -96,6 +107,9 @@ def calc_grad_ad(P,T):
 def calc_grad_rad(p,t,m,l,opacity):
     grad_rad = (3 * opacity * l * p) / (16 * np.pi * a * c * G * m * t**4)
     return grad_rad
+
+def calc_grad_actual(p,t):
+    return np.gradient(np.log(t),np.log(p))
 
 ###################
 #  energy generation
@@ -138,7 +152,8 @@ def calc_eps_total(T,rho,X1,XCNO):
 #  equation of state
 ###################
 def calc_P_rad(T):
-    return 4/3 * sigma_sb * T**4 / c
+#     return 4/3 * sigma_sb * T**4 / c
+    return 1/3 * a * T**4
 
 def calc_density(P, T, mu):        
     # Radiation pressure
@@ -178,8 +193,10 @@ def gen_logspaced_grid(start_val,final_val,n_x,log_scale=1000):
     return gridpoints
 
 def shoot_out(f,x_i,x_f,bc_i_guess,bc_f_guess,
-           n_left=1000,n_right=1000, x_fit=None,return_y=False,
-           grid_log_scale=1000):
+           n_left=1000,n_right=1000, 
+              x_fit=None,return_y=False,
+           grid_log_scale_l=1000,
+           grid_log_scale_r=1000):
     '''shoot to the surface'''
     # sanity check
     assert x_i < x_f, "boundary coordinates are invalid"
@@ -192,8 +209,8 @@ def shoot_out(f,x_i,x_f,bc_i_guess,bc_f_guess,
     
     # define left- and right-side axes for integration
     # x_fit is only used to define the coordinate of the lowest density
-    x_left = gen_logspaced_grid(x_i,x_fit,n_left,grid_log_scale)
-    x_right = gen_logspaced_grid(x_f,x_fit,n_right,grid_log_scale)
+    x_left = gen_logspaced_grid(x_i,x_fit,n_left,grid_log_scale_l)
+    x_right = gen_logspaced_grid(x_f,x_fit,n_right,grid_log_scale_r)
     x = np.concatenate([x_left,np.flip(x_right)])
     
     # integrated values
@@ -280,10 +297,10 @@ def derivs(y,x,fixed_params):
     p_prime = np.array(p_prime)
     r_prime = np.array(r_prime)
     t_prime = np.array(t_prime)
-    l_prime[s] = 0
-    p_prime[s] = 0
-    r_prime[s] = 0
-    t_prime[s] = 0
+    l_prime[s] = np.nan
+    p_prime[s] = np.nan
+    r_prime[s] = np.nan
+    t_prime[s] = np.nan
     
     return [l_prime,p_prime,r_prime,t_prime]
 
